@@ -53,7 +53,7 @@ def generate(t, f):
     ------
     x : list of positions
     """
-    return M(t) @ f
+    return M(t) @ f / np.sqrt(np.pi)
 
 def infer(t, x):
     """
@@ -68,4 +68,4 @@ def infer(t, x):
     ------
     f : list of forces
     """
-    return scipy.linalg.inv(M(t)) @ x
+    return scipy.linalg.inv(M(t)) @ x * np.sqrt(np.pi)

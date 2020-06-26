@@ -67,15 +67,15 @@ class rousesim:
         """
         Draw a conformation from steady state. This function does not
         necessarily require setup() having been called.
+
+        Note: do not fiddle with _G's here, they have nothing to do with the
+        steady state.
         """
         if not hasattr(self, '_invB'):
             self._invB = scipy.linalg.inv(self.B)
 
-        if not hasattr(self, '_G'):
-            self.update_G()
-
         L = scipy.linalg.cholesky(self._invB * self._s2_2k(), lower=True)
-        return L @ np.random.normal(size=(self.N, 3)) + (self._invB/self.k) @ self._G
+        return L @ np.random.normal(size=(self.N, 3)) + (self._invB/self.k) @ self.F
 
     def propagate(self, conf, deterministic=False):
         """
