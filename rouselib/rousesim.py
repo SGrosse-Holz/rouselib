@@ -91,6 +91,21 @@ class rousesim:
             conf = self.propagate(conf, **kwargs)
             yield conf
 
+    def traj_cov(self, m, T):
+        """
+        Calculate covariance matrix of (m.x)(t) for T steps.
+
+        Input
+        -----
+        m : (N,) array-like
+            the measurement vector
+        T : int
+            number of steps (i.e. dimension of the covariance matrix)
+        """
+        Jm = self._invB * self._s2_2k() @ m
+        mAnJm = [m @ scipy.linalg.matrix_power(self._A, n) @ Jm for n in range(T)]
+        return scipy.linalg.toeplitz(mAnJm)
+
     ######## Stuff to do with units
 
     def calibrate(self, dmon_nm=np.sqrt(1000), Gamma_um2_s05=0.01, kBT_pNnm=4, print_gamma=False):
