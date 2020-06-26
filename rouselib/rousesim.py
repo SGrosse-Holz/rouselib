@@ -52,7 +52,7 @@ class rousesim:
         self._A = scipy.linalg.expm(-self.k*self._dt*self.B)
 
         # Mean
-        self._G = (np.eye(self.N) - self._A) @ (self._invB/self.k) @ self.F
+        self.update_G()
 
         # Variance
         self._Sig = (np.eye(self.N) - self._A@self._A) @ self._invB * self._s2_2k()
@@ -69,10 +69,13 @@ class rousesim:
         necessarily require setup() having been called.
         """
         if not hasattr(self, '_invB'):
-            self._invB = scipy.linalg.inv(B)
+            self._invB = scipy.linalg.inv(self.B)
+
+        if not hasattr(self, '_G'):
+            self.update_G()
 
         L = scipy.linalg.cholesky(self._invB * self._s2_2k(), lower=True)
-        return L @ np.random.normal(size=(self.N, 3)) + (self._invB/self.k) @ self.F
+        return L @ np.random.normal(size=(self.N, 3)) + (self._invB/self.k) @ self._G
 
     def propagate(self, conf, deterministic=False):
         """
