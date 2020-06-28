@@ -16,7 +16,7 @@ class rousesim:
     called after changing them.
     """
 
-    def __init__(self, N, k=1, sigma=1):
+    def __init__(self, N, k=1, sigma=1, deterministic=False):
         """
         Set up a new simulation of a simple chain of length N, tethered to the
         origin. Also set spring constant k and noise level sigma.
@@ -24,6 +24,7 @@ class rousesim:
         self.N = N
         self.k = k
         self.sigma = sigma
+        self.deterministic = deterministic
 
     def set_BFfree(self):
         """
@@ -74,14 +75,17 @@ class rousesim:
         if not hasattr(self, '_invB'):
             self._invB = scipy.linalg.inv(self.B)
 
-        L = scipy.linalg.cholesky(self._invB * self._s2_2k(), lower=True)
-        return L @ np.random.normal(size=(self.N, 3)) + (self._invB/self.k) @ self.F
+        if self.deterministic:
+            return (self._invB/self.k) @ self.F
+        else:
+            L = scipy.linalg.cholesky(self._invB * self._s2_2k(), lower=True)
+            return L @ np.random.normal(size=(self.N, 3)) + (self._invB/self.k) @ self.F
 
-    def propagate(self, conf, deterministic=False):
+    def propagate(self, conf):
         """
         Propagate a given conformation by the time step given to setup().
         """
-        if deterministic:
+        if self.deterministic:
             return self._A @ conf + self._G
         else:
             return self._A @ conf + self._G + self._LSig @ np.random.normal(size=(self.N, 3))
@@ -91,9 +95,11 @@ class rousesim:
             conf = self.propagate(conf, **kwargs)
             yield conf
 
-    def traj_cov(self, m, T):
+    def traj_noise_acf(self, m, T):
         """
-        Calculate covariance matrix of (m.x)(t) for T steps.
+        Calculate the noise autocorrelation ('centered acf') of the trajectory
+        (m.x)(t), for T steps. The covariance matrix for this trajectory is
+        scipy.linalg.toeplitz(acf).
 
         Input
         -----
@@ -103,8 +109,7 @@ class rousesim:
             number of steps (i.e. dimension of the covariance matrix)
         """
         Jm = self._invB * self._s2_2k() @ m
-        mAnJm = [m @ scipy.linalg.matrix_power(self._A, n) @ Jm for n in range(T)]
-        return scipy.linalg.toeplitz(mAnJm)
+        return np.array([m @ np.linalg.matrix_power(self._A, n) @ Jm for n in range(T)])
 
     ######## Stuff to do with units
 
