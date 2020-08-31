@@ -192,7 +192,7 @@ class locusInference:
         t0 = np.expand_dims(self.t, 0) - self.t[0]
         t1 = np.expand_dims(self.t, 1) - self.t[0]
 
-        return self.Gamma*( t0**self.alpha + t1**self.alpha - np.abs(t0-t1)**self.alpha )
+        return 0.5*self.Gamma*( t0**self.alpha + t1**self.alpha - np.abs(t0-t1)**self.alpha )
 
     def covForce(self):
         """
