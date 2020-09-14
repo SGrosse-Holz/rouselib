@@ -86,7 +86,7 @@ class locusInference:
             kT is in pN*μm
         """
         self._kT = kT
-        self._spgk = kT / Gamma # sqrt(pi * gamma * kappa) in the Rouse model
+        self._spgk = 2*kT / Gamma # sqrt(pi * gamma * kappa) in the Rouse model
         self.Gamma = Gamma
         self.updateM()
         
