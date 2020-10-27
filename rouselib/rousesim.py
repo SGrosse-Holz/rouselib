@@ -2,21 +2,27 @@ import os, sys
 
 import numpy as np
 import scipy.linalg
+import scipy.integrate
 
 from . import util
 
-class rousesim:
+class Rousesim:
     """
     A class for simulation / exact solution of a Rouse model with eom
     $$
-    \dot{x} = -kBx + F + sigma\eta\,.
+    \dot{x} = -k*A*x + F + sigma\eta\,.
     $$
 
-    Note that while k, B, F, sigma are publicly accessible, setup() should be
+    Note that while k, A, F, sigma are publicly accessible, setup() should be
     called after changing them.
+
+    This class also has a parameter 'deterministic'. If set to True, this will
+    remove all thermal noise, such that the configuration evolves as the
+    ensemble mean. This is interesting when studying the effect of forces on
+    the chain.
     """
 
-    def __init__(self, N, k=1, sigma=1, deterministic=False):
+    def __init__(self, N, k=1, sigma=1, deterministic=False, d=3):
         """
         Set up a new simulation of a simple chain of length N, tethered to the
         origin. Also set spring constant k and noise level sigma.
@@ -25,21 +31,26 @@ class rousesim:
         self.k = k
         self.sigma = sigma
         self.deterministic = deterministic
+        self.d = d
 
-    def set_BFfree(self):
+    def set_AFfree(self):
         """
-        Set B and F to the values for a free chain. Note that this will not run
-        as simulation, because B is singular.
+        Set A and F to the values for a free chain. Note that this will not run
+        as simulation, because A is singular.
         """
-        self.B = util.Bfree(self.N)
-        self.F = np.zeros((self.N, 3))
+        self.A = util.Afree(self.N)
+        self.F = np.zeros((self.N, self.d))
 
-    def add_crosslinks(self, links):
-        self.B += util.Bcrosslinks(self.N, links)
+    def add_crosslinks(self, links, relStrength=1):
+        """
+        Add crosslinks to the connectivity matrix. It's strength relative to
+        the backbone bonds can be adapted with relStrength.
+        """
+        self.A += relStrength * util.Acrosslinks(self.N, links)
 
     def add_tether(self, pos=0, strength=1):
         """Add additional tether(s)"""
-        self.B[pos, pos] += strength
+        self.A[pos, pos] += strength
 
     def _s2_2k(self):
         return self.sigma**2 / (2*self.k)
@@ -49,18 +60,40 @@ class rousesim:
         Set up this instance for simulation at time step dt.
         """
         self._dt = dt
-        self._invB = scipy.linalg.inv(self.B)
-        self._A = scipy.linalg.expm(-self.k*self._dt*self.B)
+        if np.isclose(scipy.linalg.det(self.A), 0):
+            self._invA = None
+        else:
+            self._invA = scipy.linalg.inv(self.A)
+        self._B = scipy.linalg.expm(-self.k*self._dt*self.A)
 
         # Mean
         self.update_G()
 
         # Variance
-        self._Sig = (np.eye(self.N) - self._A@self._A) @ self._invB * self._s2_2k()
-        self._LSig = scipy.linalg.cholesky(self._Sig, lower=True)
+        self.update_Sig()
 
     def update_G(self):
-        self._G = (np.eye(self.N) - self._A) @ (self._invB/self.k) @ self.F
+        """ Update G from k, A, F, sigma """
+        if not np.any(self.F):
+            self._G = np.zeros_like(self.F)
+        elif self._invA is not None:
+            self._G = (np.eye(self.N) - self._B) @ (self._invA/self.k) @ self.F
+        else:
+            def integrand(tau):
+                return scipy.linalg.expm(-self.k*self.A*tau) @ self.F
+            self._G = scipy.integrate.quad_vec(integrand, 0, self._dt)[0]
+
+    def update_Sig(self):
+        """ Update Sigma and its Cholesky decomposition from k, A, F, sigma """
+        if self._invA is not None:
+            self._Sig = (np.eye(self.N) - self._B@self._B) @ self._invA * self._s2_2k()
+        else:
+            def integrand(tau):
+                eAt = scipy.linalg.expm(-self.k*self.A*tau)
+                return eAt @ eAt.T * self.sigma**2
+            self._Sig = scipy.integrate.quad_vec(integrand, 0, self._dt)[0]
+
+        self._LSig = scipy.linalg.cholesky(self._Sig, lower=True)
 
     ###### Actually running a simulation
 
@@ -72,23 +105,26 @@ class rousesim:
         Note: do not fiddle with _G's here, they have nothing to do with the
         steady state.
         """
-        if not hasattr(self, '_invB'):
-            self._invB = scipy.linalg.inv(self.B)
+        if not hasattr(self, '_invA') or self._invA is None:
+            try:
+                self._invA = scipy.linalg.inv(self.A)
+            except np.linalg.LinAlgError:
+                raise RuntimeError("A is singular, there is no steady state to sample from.")
 
-        if self.deterministic:
-            return (self._invB/self.k) @ self.F
-        else:
-            L = scipy.linalg.cholesky(self._invB * self._s2_2k(), lower=True)
-            return L @ np.random.normal(size=(self.N, 3)) + (self._invB/self.k) @ self.F
+        conf = (self._invA/self.k) @ self.F
+        if not self.deterministic:
+            L = scipy.linalg.cholesky(self._invA * self._s2_2k(), lower=True)
+            conf += L @ np.random.normal(size=(self.N, self.d))
+        return conf
 
     def propagate(self, conf):
         """
         Propagate a given conformation by the time step given to setup().
         """
         if self.deterministic:
-            return self._A @ conf + self._G
+            return self._B @ conf + self._G
         else:
-            return self._A @ conf + self._G + self._LSig @ np.random.normal(size=(self.N, 3))
+            return self._B @ conf + self._G + self._LSig @ np.random.normal(size=(self.N, self.d))
 
     def propagate_gen(self, conf, steps, **kwargs):
         for _ in range(steps):
@@ -108,8 +144,8 @@ class rousesim:
         T : int
             number of steps (i.e. dimension of the covariance matrix)
         """
-        Jm = self._invB * self._s2_2k() @ m
-        return np.array([m @ np.linalg.matrix_power(self._A, n) @ Jm for n in range(T)])
+        Jm = self._invA * self._s2_2k() @ m
+        return np.array([m @ np.linalg.matrix_power(self._B, n) @ Jm for n in range(T)])
 
     ######## Stuff to do with units
 
@@ -118,9 +154,9 @@ class rousesim:
         Calculate length and time scales for the simulation
         """
         self.units = { \
-                't_s' : 4*(dmon_nm/1e3)**4*self.k/(np.pi*Gamma_um2_s05**2), \
-                'x_nm' : dmon_nm * np.sqrt(2*self.k/(3*self.sigma**2)), \
-                'F_pN' : np.sqrt(3/(2*self.k))/self.sigma * kBT_pNnm / dmon_nm }
+                't_s' : 4*(dmon_nm/1e3.flatten().flatten())**4*self.k/(np.pi*Gamma_um2_s05**2), \
+                'x_nm' : dmon_nm * np.sqrt(2*self.k/(self.d*self.sigma**2)), \
+                'F_pN' : np.sqrt(self.d/(2*self.k))/self.sigma * kBT_pNnm / dmon_nm }
 
         if print_gamma:
             print('damping coefficient for one monomer: gamma = {:e} kg/s'.format( \
@@ -145,7 +181,7 @@ class rousesim:
     def Equilibration_time(self, do_print=False):
         """
         This is defined as the crossover time in the MSD. It has a factor of
-        pi**3/4 relative to the Rouse time
+        pi**3 / 4 relative to the Rouse time
         """
         tR = np.pi * self.N**2 / (4*self.k)
         if do_print:
