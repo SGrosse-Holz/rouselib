@@ -48,9 +48,12 @@ class Rousesim:
         """
         self.A += relStrength * util.Acrosslinks(self.N, links)
 
-    def add_tether(self, pos=0, strength=1):
+    def add_tether(self, pos=0, relStrength=1, to=None):
         """Add additional tether(s)"""
-        self.A[pos, pos] += strength
+        if to is None:
+            to = self.d*[0]
+        self.A[pos, pos] += relStrength * self.k
+        self.F[pos] += relStrength * self.k * to
 
     def _s2_2k(self):
         return self.sigma**2 / (2*self.k)
@@ -130,6 +133,11 @@ class Rousesim:
         for _ in range(steps):
             conf = self.propagate(conf, **kwargs)
             yield conf
+
+    def contact_probability(self):
+        J = self._s2_2k() * self._invA
+        Jii = np.tile(np.diagonal(J), (len(J), 1))
+        return (Jii + Jii.T - 2*J)**(-3/2)
 
     def traj_noise_acf(self, m, T):
         """
