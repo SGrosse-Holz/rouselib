@@ -51,7 +51,7 @@ class Rousesim:
     def add_tether(self, pos=0, relStrength=1, to=None):
         """Add additional tether(s)"""
         if to is None:
-            to = self.d*[0]
+            to = np.zeros(self.d)
         self.A[pos, pos] += relStrength * self.k
         self.F[pos] += relStrength * self.k * to
 
@@ -154,6 +154,61 @@ class Rousesim:
         """
         Jm = self._invA * self._s2_2k() @ m
         return np.array([m @ np.linalg.matrix_power(self._B, n) @ Jm for n in range(T)])
+
+    ######## MSD
+
+    def analytical_MSD(self, dts, w=None):
+        """
+        Calculate the analytical MSD ``w @ <( x(t+Δt) - x(t) )^2> @ w``.
+
+        Parameters
+        ----------
+        dt : array-like
+            vector of time lags for which to evaluate the MSD
+        w : (N,) array_like, optional
+            the measurement vector. E.g. ``[-1, 0, 0, ..., 0, 0, 1]`` if we are
+            interested in end-to-end distance. If unspecified, return full
+            covariance matrices.
+
+        Returns
+        -------
+        np.ndarray
+            MSD evaluated at the given time lags
+
+        Notes
+        -----
+        For the discrete process ``x_n = B.x_{n-1} + ξ_n`` with ``<ξ_m x ξ_n> =
+        δ_mn Σ`` we have ``<( x_n - x_{n-1} )^(x)2> = Σ + (1+B)^-1 Σ (1-B)``.
+
+        We assume the customary ``BΣ = ΣB^T``.
+        """
+        dts = np.sort(dts)
+
+        if not hasattr(self, '_invA'):
+            if np.isclose(scipy.linalg.det(self.A), 0):
+                self._invA = None
+            else:
+                self._invA = scipy.linalg.inv(self.A)
+
+        Bs = [scipy.linalg.expm(-self.k*self.A*dt) for dt in dts]
+
+        if self._invA is not None:
+            Sigs = [(np.eye(self.N) - B @ B) @ self._invA * self._s2_2k() for B in Bs]
+        else:
+            def integrand(tau):
+                eAt = scipy.linalg.expm(-self.k*self.A*tau)
+                return eAt @ eAt.T * self.sigma**2
+            # Some trickery to calculate cum_quad_vec
+            res, err, full_info = scipy.integrate.quad_vec(integrand, 0, np.max(dts), full_output=True, points=dts)
+            Sigs = [np.sum(full_info.integrals[full_info.intervals[:, 1] <= dt], axis=0) for dt in dts]
+
+        xxs = [2*scipy.linalg.inv(np.eye(self.N) + B) @ Sig for B, Sig in zip(Bs, Sigs)]
+
+        if w is None:
+            return np.array(xxs)
+        else:
+            return np.array([w @ xx @ w for xx in xxs])
+
 
     ######## Stuff to do with units
 
